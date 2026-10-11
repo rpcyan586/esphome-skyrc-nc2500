@@ -1,6 +1,5 @@
-# Optional Home Assistant package: charge % and time-left estimates per slot.
-#
-# Office battery charger (SkyRC NC2500, esphome/office-battery-charger.yaml): progress % and time left per slot.
+# Optional Home Assistant package for the SkyRC NC2500 node in example.yaml (entity ids assume it is called
+# office-battery-charger - adjust to yours): progress % and time left per slot.
 #
 # The charger reports mAh and run time, not how full the battery is, so these are ESTIMATES that use the mode
 # that is running, the slot's settings (battery capacity, charge/discharge current, cycles) and the live current:
@@ -11,12 +10,73 @@
 #   Refresh    charge + discharge + charge, with 1 h rests (rest length assumed).
 #   Break-In   0.1C for 16 h, rest 1 h, 0.2C discharge (5 h), rest 1 h, 0.1C for 16 h = 39 h (from a review).
 #   Cycle      charge, then N x (discharge, charge), 1 h rest between every step (rests from a review).
-#   Refresh / Break-In / Cycle: left = planned total - the charger's run time (assumes run time counts the whole
-#   program; not yet checked against a live multi-step run). Done = 100%.
-# Only exists while connected with a battery in the slot that is working or done.
+#   Refresh / Break-In / Cycle are multi-phase programs. VERIFIED on a live Refresh (11 Oct): the charger's run time
+#   RESTARTS AT 0 IN EVERY PHASE (charge 5 h, rest 1 h, discharge, rest 1 h, charge 5 h), and mode/capacity don't say
+#   which phase it is in. So sensor.*_program_phase (below) counts phase changes since the program started, and
+#   left = the rest of the current phase (planned length - run time) + all later phases. Cycle = charge, then
+#   N x (rest, discharge, rest, charge). Done = 100%.
+# Only exists while connected with a battery in the slot that is working, resting or done.
 # attributes: time_left (long text), time_short (compact), minutes_left (number).
 
 template:
+  # Phase counter per slot: 0 = first phase of the running program, +1 on every Charging/Resting/Discharging change.
+  # Resets when the slot starts from idle/done; a gap where the slot is unavailable (ESP or charger off) keeps it.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.office_battery_charger_slot_1_state
+    sensor:
+      - name: "Office Battery Charger Slot 1 Program Phase"
+        unique_id: office_battery_charger_slot_1_program_phase
+        state: >-
+          {% set act = ['Charging', 'Resting', 'Discharging'] %}
+          {% set to = trigger.to_state.state %}
+          {% set fr = trigger.from_state.state if trigger.from_state else 'unknown' %}
+          {% if to in act and fr in act %}{{ (this.state | int(0)) + (1 if to != fr else 0) }}
+          {% elif to in act and fr in ['unavailable', 'unknown'] %}{{ this.state | int(0) }}
+          {% elif to in act %}0
+          {% else %}{{ this.state | int(0) if to in ['unavailable', 'unknown'] else 0 }}{% endif %}
+  - triggers:
+      - trigger: state
+        entity_id: sensor.office_battery_charger_slot_2_state
+    sensor:
+      - name: "Office Battery Charger Slot 2 Program Phase"
+        unique_id: office_battery_charger_slot_2_program_phase
+        state: >-
+          {% set act = ['Charging', 'Resting', 'Discharging'] %}
+          {% set to = trigger.to_state.state %}
+          {% set fr = trigger.from_state.state if trigger.from_state else 'unknown' %}
+          {% if to in act and fr in act %}{{ (this.state | int(0)) + (1 if to != fr else 0) }}
+          {% elif to in act and fr in ['unavailable', 'unknown'] %}{{ this.state | int(0) }}
+          {% elif to in act %}0
+          {% else %}{{ this.state | int(0) if to in ['unavailable', 'unknown'] else 0 }}{% endif %}
+  - triggers:
+      - trigger: state
+        entity_id: sensor.office_battery_charger_slot_3_state
+    sensor:
+      - name: "Office Battery Charger Slot 3 Program Phase"
+        unique_id: office_battery_charger_slot_3_program_phase
+        state: >-
+          {% set act = ['Charging', 'Resting', 'Discharging'] %}
+          {% set to = trigger.to_state.state %}
+          {% set fr = trigger.from_state.state if trigger.from_state else 'unknown' %}
+          {% if to in act and fr in act %}{{ (this.state | int(0)) + (1 if to != fr else 0) }}
+          {% elif to in act and fr in ['unavailable', 'unknown'] %}{{ this.state | int(0) }}
+          {% elif to in act %}0
+          {% else %}{{ this.state | int(0) if to in ['unavailable', 'unknown'] else 0 }}{% endif %}
+  - triggers:
+      - trigger: state
+        entity_id: sensor.office_battery_charger_slot_4_state
+    sensor:
+      - name: "Office Battery Charger Slot 4 Program Phase"
+        unique_id: office_battery_charger_slot_4_program_phase
+        state: >-
+          {% set act = ['Charging', 'Resting', 'Discharging'] %}
+          {% set to = trigger.to_state.state %}
+          {% set fr = trigger.from_state.state if trigger.from_state else 'unknown' %}
+          {% if to in act and fr in act %}{{ (this.state | int(0)) + (1 if to != fr else 0) }}
+          {% elif to in act and fr in ['unavailable', 'unknown'] %}{{ this.state | int(0) }}
+          {% elif to in act %}0
+          {% else %}{{ this.state | int(0) if to in ['unavailable', 'unknown'] else 0 }}{% endif %}
   - sensor:
       - name: "Office Battery Charger Slot 1 Charge"
         unique_id: office_battery_charger_slot_1_charge
@@ -26,7 +86,7 @@ template:
         availability: >-
           {{ is_state('binary_sensor.office_battery_charger_bluetooth_connected', 'on')
              and is_state('binary_sensor.office_battery_charger_slot_1_battery', 'on')
-             and states('sensor.office_battery_charger_slot_1_state') in ['Charging', 'Discharging', 'Rest', 'Done'] }}
+             and states('sensor.office_battery_charger_slot_1_state') in ['Charging', 'Discharging', 'Resting', 'Done'] }}
         state: >-
           {% if is_state('sensor.office_battery_charger_slot_1_state', 'Done') %}100{% else %}
           {% set p = 'office_battery_charger_slot_1' %}
@@ -41,12 +101,14 @@ template:
           {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
           {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
           {% set td = rated / idc * 60 %}
-          {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+          {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+          {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+          {% set total = ph | sum %}
           {% set tgt = [rated * 1.3, ic * 5] | min %}
           {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
           {% set left = [left | round(0) | int, 0] | max %}
-          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
           {{ [(frac * 100) | round(0) | int, 99] | min }}{% endif %}
         attributes:
           minutes_left: >-
@@ -63,12 +125,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {{ left }}{% endif %}
           time_left: >-
             {% if is_state('sensor.office_battery_charger_slot_1_state', 'Done') %}Done{% else %}
@@ -84,12 +148,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}about {{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}about {{ left }}m left{% else %}nearly done{% endif %}{% endif %}
           time_short: >-
             {% if is_state('sensor.office_battery_charger_slot_1_state', 'Done') %}done{% else %}
@@ -105,12 +171,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}{{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}{{ left }}m left{% else %}nearly done{% endif %}{% endif %}
       - name: "Office Battery Charger Slot 2 Charge"
         unique_id: office_battery_charger_slot_2_charge
@@ -120,7 +188,7 @@ template:
         availability: >-
           {{ is_state('binary_sensor.office_battery_charger_bluetooth_connected', 'on')
              and is_state('binary_sensor.office_battery_charger_slot_2_battery', 'on')
-             and states('sensor.office_battery_charger_slot_2_state') in ['Charging', 'Discharging', 'Rest', 'Done'] }}
+             and states('sensor.office_battery_charger_slot_2_state') in ['Charging', 'Discharging', 'Resting', 'Done'] }}
         state: >-
           {% if is_state('sensor.office_battery_charger_slot_2_state', 'Done') %}100{% else %}
           {% set p = 'office_battery_charger_slot_2' %}
@@ -135,12 +203,14 @@ template:
           {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
           {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
           {% set td = rated / idc * 60 %}
-          {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+          {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+          {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+          {% set total = ph | sum %}
           {% set tgt = [rated * 1.3, ic * 5] | min %}
           {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
           {% set left = [left | round(0) | int, 0] | max %}
-          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
           {{ [(frac * 100) | round(0) | int, 99] | min }}{% endif %}
         attributes:
           minutes_left: >-
@@ -157,12 +227,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {{ left }}{% endif %}
           time_left: >-
             {% if is_state('sensor.office_battery_charger_slot_2_state', 'Done') %}Done{% else %}
@@ -178,12 +250,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}about {{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}about {{ left }}m left{% else %}nearly done{% endif %}{% endif %}
           time_short: >-
             {% if is_state('sensor.office_battery_charger_slot_2_state', 'Done') %}done{% else %}
@@ -199,12 +273,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}{{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}{{ left }}m left{% else %}nearly done{% endif %}{% endif %}
       - name: "Office Battery Charger Slot 3 Charge"
         unique_id: office_battery_charger_slot_3_charge
@@ -214,7 +290,7 @@ template:
         availability: >-
           {{ is_state('binary_sensor.office_battery_charger_bluetooth_connected', 'on')
              and is_state('binary_sensor.office_battery_charger_slot_3_battery', 'on')
-             and states('sensor.office_battery_charger_slot_3_state') in ['Charging', 'Discharging', 'Rest', 'Done'] }}
+             and states('sensor.office_battery_charger_slot_3_state') in ['Charging', 'Discharging', 'Resting', 'Done'] }}
         state: >-
           {% if is_state('sensor.office_battery_charger_slot_3_state', 'Done') %}100{% else %}
           {% set p = 'office_battery_charger_slot_3' %}
@@ -229,12 +305,14 @@ template:
           {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
           {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
           {% set td = rated / idc * 60 %}
-          {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+          {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+          {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+          {% set total = ph | sum %}
           {% set tgt = [rated * 1.3, ic * 5] | min %}
           {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
           {% set left = [left | round(0) | int, 0] | max %}
-          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
           {{ [(frac * 100) | round(0) | int, 99] | min }}{% endif %}
         attributes:
           minutes_left: >-
@@ -251,12 +329,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {{ left }}{% endif %}
           time_left: >-
             {% if is_state('sensor.office_battery_charger_slot_3_state', 'Done') %}Done{% else %}
@@ -272,12 +352,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}about {{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}about {{ left }}m left{% else %}nearly done{% endif %}{% endif %}
           time_short: >-
             {% if is_state('sensor.office_battery_charger_slot_3_state', 'Done') %}done{% else %}
@@ -293,12 +375,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}{{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}{{ left }}m left{% else %}nearly done{% endif %}{% endif %}
       - name: "Office Battery Charger Slot 4 Charge"
         unique_id: office_battery_charger_slot_4_charge
@@ -308,7 +392,7 @@ template:
         availability: >-
           {{ is_state('binary_sensor.office_battery_charger_bluetooth_connected', 'on')
              and is_state('binary_sensor.office_battery_charger_slot_4_battery', 'on')
-             and states('sensor.office_battery_charger_slot_4_state') in ['Charging', 'Discharging', 'Rest', 'Done'] }}
+             and states('sensor.office_battery_charger_slot_4_state') in ['Charging', 'Discharging', 'Resting', 'Done'] }}
         state: >-
           {% if is_state('sensor.office_battery_charger_slot_4_state', 'Done') %}100{% else %}
           {% set p = 'office_battery_charger_slot_4' %}
@@ -323,12 +407,14 @@ template:
           {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
           {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
           {% set td = rated / idc * 60 %}
-          {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+          {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+          {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+          {% set total = ph | sum %}
           {% set tgt = [rated * 1.3, ic * 5] | min %}
           {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+          {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
           {% set left = [left | round(0) | int, 0] | max %}
-          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+          {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
           {{ [(frac * 100) | round(0) | int, 99] | min }}{% endif %}
         attributes:
           minutes_left: >-
@@ -345,12 +431,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {{ left }}{% endif %}
           time_left: >-
             {% if is_state('sensor.office_battery_charger_slot_4_state', 'Done') %}Done{% else %}
@@ -366,12 +454,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}about {{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}about {{ left }}m left{% else %}nearly done{% endif %}{% endif %}
           time_short: >-
             {% if is_state('sensor.office_battery_charger_slot_4_state', 'Done') %}done{% else %}
@@ -387,12 +477,14 @@ template:
             {% set run = states('sensor.' ~ p ~ '_run_time') | float(0) %}
             {% set tc = [rated * 1.3 / ic * 60, 300] | min %}
             {% set td = rated / idc * 60 %}
-            {% set total = {'Refresh': 2 * tc + td + 120, 'Break-In': 2340, 'Cycle': (cyc + 1) * tc + cyc * td + 120 * cyc}.get(mode, 0) %}
+            {% set k = states('sensor.' ~ p ~ '_program_phase') | int(0) %}
+            {% set ph = {'Refresh': [tc, 60, td, 60, tc], 'Break-In': [960, 60, 300, 60, 960], 'Cycle': [tc] + [60, td, 60, tc] * cyc}.get(mode, []) %}
+            {% set total = ph | sum %}
             {% set tgt = [rated * 1.3, ic * 5] | min %}
             {% set simple = mode not in ['Refresh', 'Break-In', 'Discharge', 'Cycle'] %}
-            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else total - run) %}
+            {% set left = ((tgt - mah) / ic * 60 if simple else (rated - mah) / idc * 60 if mode == 'Discharge' else (ph[k:] | sum) - run) %}
             {% set left = [left | round(0) | int, 0] | max %}
-            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else run / total) %}
+            {% set frac = (mah / tgt if simple else mah / rated if mode == 'Discharge' else ((total - left) / total if total > 0 else 0)) %}
             {% if left >= 60 %}{{ left // 60 }}h {{ left % 60 }}m left{% elif left > 0 %}{{ left }}m left{% else %}nearly done{% endif %}{% endif %}
 
 # Starts the same setup on every slot that holds a battery: copies the source slot's staged mode, charge and
