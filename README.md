@@ -37,10 +37,12 @@ The charger accepts one Bluetooth connection at a time. The example has a "Bluet
 it for the phone app.
 
 ## Status
-Working on real hardware (NC2500, firmware as of Oct 2026): reading all four slots, and **Charge** mode
-setting/starting, and a full **Refresh** run on three cells (see below). Break-In, Discharge and Cycle commands
-are decoded from the vendor app but **not tested on a real battery**. There is no stop command in the protocol - use the charger's buttons.
-System settings (delta-V, cut-offs) and firmware update commands are deliberately not implemented.
+Working on real hardware (NC2500, firmware as of Oct 2026):
+- Reading all four slots.
+- **Charge** and **Refresh** modes have been set and run on real cells (a complete Refresh).
+- **Break-In**, **Discharge** and **Cycle** are decoded from the vendor app but **not tested on a real battery**.
+- There is no stop command in the protocol - use the charger's buttons.
+- System settings (delta-V, cut-offs) and firmware update commands are deliberately not implemented.
 
 `home-assistant/progress-estimates-package.yaml` is an optional Home Assistant package that estimates charge %
 and time left per slot (the charger reports mAh and run time, not how full a battery is). It assumes entity ids

@@ -1,75 +1,99 @@
-# SkyRC NC2500 — protocol notes (from APK com.revogi.smartcharge 0.9.9, decompiled 10 Oct 2026)
+# SkyRC NC2500 Bluetooth protocol
 
-Derived by analysing the vendor Android app com.revogi.smartcharge 0.9.9 (the old "SkyRC Smart Charger" app; the current "SkyRC" app v2.92 does not support the NC2500), then confirmed against real hardware.
+How the NC2500 talks over classic Bluetooth, as implemented in `components/skyrc_nc2500`. It was worked out by
+analysing the old *SkyRC Smart Charger* Android app (com.revogi.smartcharge 0.9.9; the current "SkyRC" app does
+not support this charger) and then checked against real hardware. Section 6 lists what has and hasn't been
+verified on a real charger.
 
-## Transport
-- Classic Bluetooth, RFCOMM/SPP UUID 00001101-0000-1000-8000-00805F9B34FB (not BLE).
-- Charger contains an "iBT-02" bridge module; app wraps it with com.vsd.android.support.ibridge (session layer with handshake — NOT yet decoded).
+## 1. Transport
+- Classic Bluetooth, RFCOMM serial port (SPP, UUID `00001101-0000-1000-8000-00805F9B34FB`), **not BLE**.
+- The charger advertises as `skyrcNNNN` and uses RFCOMM **channel 2**. Pairing PIN `1234`, with no prompt.
+- It only answers while its Bluetooth is on (hold ENTER until the blue LED lights) and accepts **one connection at a time**.
+- Inside the charger is an "iBT-02" serial bridge module, so the stack has several layers.
 
-## Link framing (class ibridge.p, decoded)
-- frame = 0x55, LEN(1 byte if <=252, else 0x00,hi,lo), PAYLOAD, CHK
-- CHK = two's complement of (sum(LEN bytes) + sum(PAYLOAD)) & 0xFF
+## 2. Layers, bottom to top
 
-## Session layer (ibridge.c / i, NOT decoded)
-- Handshake/identification before app data flows (eventProtocolInitialized).
-- App data is sent as RFA write: cmd 0x12 (normal) / 0x13, payload = [0x82][len][data].
-- Replies arrive via eventDRDY type 1 as [0x0F][len]...
+| # | Layer | Format |
+|---|-------|--------|
+| 1 | Link | `55`, length, payload, checksum. Length is one byte (up to 252), otherwise `00 hi lo`. Checksum = two's complement of the sum of the length bytes and payload. |
+| 2 | Module | `00`, cmd, seq (2 bytes), data. Messages are numbered and **acknowledged**; unacknowledged ones are resent every 500 ms. Sequence starts at 0. |
+| 3 | Adapter | `95 19`, total length (= message length + 4), message, checksum. Checksum = two's complement of (length lo + length hi + 88 + sum of message); use 90 instead of 88, and a 16-bit length, when the length is 256 or more. |
+| 4 | Session | `1B`, cmd, data. Info requests `01`, mode `11`, challenge `60`, application write `12`, replies `81` / `91` / `E0`. |
+| 5 | Charger | The application messages in section 3, carried in a session write: `1B 12 82 <len> <message>`. |
 
-## Application layer (StartPage)
-- Query all:    0F 03 55 00 55 FF FF   (cmd 0x55, chk = cmd+arg)
-- Query version: 0F 03 57 00 57 FF FF   (cmd 0x57)
-- Reply starting 0x0F: device id as ASCII hex "4e4332353030" = "NC2500", firmware major.minor, serial.
-- Status record: 17 bytes per slot (dealBatteryInfo), big-endian 16-bit:
-  +0 mode, +1 exists, +2..3 mAh, +4..5 worktime, +6..7 voltage, +8..9 current,
-  +10 nowDoing(state), +11 temp, +12 cycle count, +13..14 single-cell V, +15..16 reserved
-- TODO: confirm units, slot count, state/mode enums, session handshake.
+Module layer details:
+- Open the data channel: send `3F [03 E8 01]` (channel 1000); the reply is `00 41 <seq> 00 3F`.
+- Send data to the charger: `43 [03 E8 | adapter frame]`; the reply is `00 41 <seq> 00 43`.
+- Data from the charger arrives as `00 42 <seq> 03 E8 <adapter frame>` and must be acknowledged with `00 02 <seq> 00 42`.
 
-## Session/handshake findings (second pass)
-- Session messages inside link frames are [0x1B][cmd][data...]  (ibridge.c.b). App data = [0x1B][0x12][0x82][len][payload]; 0x13 = alt write mode.
-- Init sends [1B 11 01 09], then info requests [1B 01 lo hi] for ids 0x0100,0x0100,0x0101,0x0102,0x0103,0x0106,0x0107 (table c.b), then challenge.
-- Challenge: app sends [1B 60 <16 random bytes>], module replies cmd 0xE0 (the app verifies the module). NOT needed - the charger answers without it.
-- Unknown: whether the module insists on this handshake before serving RFA data (app gates writes on flag m=initialized). Untested.
-- This container has NO Bluetooth (AF_BLUETOOTH socket -> EAFNOSUPPORT). Testing needs ESP32 (classic BT, original ESP32 chip) or a separate Linux box.
+Session start-up (as the vendor app does it): send `1B 11 01 09`, then info requests `1B 01 lo hi` for ids
+`0100 0100 0101 0102 0103 0106 0107 2000 2100`, then a challenge `1B 60 <16 random bytes>`. The module answers
+with cmd `E0` and 16 bytes, which the app checks. The component implements this check, but the charger works
+without it; a failed check is only logged.
 
-## Application layer details (third pass) + ESPHome build
-- Reply to status query (cmd 0x55): 75 bytes = 0F, len(71), cmd, ?, 4 x 17-byte slot records (from byte 4), chk(=sum of bytes 2..71), FF FF. => 4 bays.
-- Inbound RFA data inside session frames: [1B 91 (00|80) type len data...]; data starts 0x0F.
-- Units: voltage mV, current mA, capacity mAh, run time SECONDS, temperature = raw - 40 degC, "single cell" = internal resistance mOhm.
-- Mode names (rec[0]): 0 Charge, 1 Refresh, 2 Break-In, 3 Discharge, 4 Cycle, 5 Done, 6 Wait, 7 Error.
-- State names (rec[10]): 0 Not working, 1 Charging, 2 Rest, 3 Discharging, 4 Rest, 5 Done, 6 Done.
-- Bluetooth device name filter in the vendor app: lowercase name contains "skyrc" (also "skyrcnc2500").
-- Info request ids sent at start: 0100 0100 0101 0102 0103 0106 0107 2000 2100 as [1B 01 lo hi]; then [1B 11 01 09]; then challenge [1B 60 <16 rand>].
+## 3. Application messages
+All start with `0F` and end with `FF FF`.
 
-## ESPHome implementation (written 10 Oct 2026, NOT yet run against hardware)
-- Needs an ORIGINAL ESP32. First flash is by USB (esphome run / web flasher), later OTA.
-- First run: mac_address unset -> inquiry lists every Bluetooth device in the log; copy the charger's address into the config.
-- Switch "Bluetooth Link" releases the charger so the phone app can connect (it accepts one connection at a time).
-- Unknowns to check on first run: PIN (1234 vs 0000), whether handshake order is accepted, units vs the app's screen.
+**Status query** `0F 03 55 00 55 FF FF`. The reply is 75 bytes: `0F`, length (71), cmd, one unknown byte, then
+**four 17-byte slot records**, a checksum (sum of bytes 2..71), `FF FF`. A slot record, big-endian 16-bit fields:
 
-## WORKING (confirmed live on hardware, 10 Oct 2026) - corrected stack
-My first firmware skipped two layers and the charger stayed silent. The full stack, bottom to top:
-1. Link:    55 | len | payload | chk                       chk = ~(len+sum)+1
-2. Module:  00 | cmd | seq(2) | data  - numbered, ACKED, resent every 500 ms until acked. seq starts 0.
-            3F [03 E8 01] = open channel 1000   -> reply 00 41 seq 00 3F
-            43 [03 E8 | adapter frame] = data to charger -> reply 00 41 seq 00 43
-            Charger data arrives as 00 42 seq(2) 03 E8 <adapter frame>; we must ack with 00 02 seq(2) 00 42.
-3. Adapter: 95 19 | total(=len+4) | message | chk, chk = ~(len_lo+len_hi+88+sum(message))+1  (+90 instead of 88 if len+4>=256; 16-bit length form when long)
-4. Session: 1B | cmd | data     (info requests 01, mode 11, challenge 60, RFA write 12, replies 81/91/E0)
-5. Charger: status query 0F 03 55 00 55 FF FF inside RFA write 1B 12 82 07 ...; reply = 1B 91 80 02 4B 0F 47 55 ... (75 bytes)
-Identity replies seen: "NC2500", "AA/AAA CHARGER", "SkyRC Technology Co.,Ltd".
-Bluetooth: charger name "skyrcNNNN", address AA:BB:CC:DD:EE:FF, serial channel 2, pairing OK with PIN 1234 (no prompt).
-The charger's Bluetooth only answers searches while it is switched on by holding ENTER (blue LED).
-Units confirmed: 56 mAh after 1019 s at 0.200 A (= 0.2*1019/3600). Voltage mV, current mA, temp = raw-40.
+| Offset | Field | Unit / values |
+|--------|-------|---------------|
+| 0 | mode | 0 Charge, 1 Refresh, 2 Break-In, 3 Discharge, 4 Cycle, 5 Done, 6 Wait, 7 Error |
+| 1 | battery present | 0 / 1 |
+| 2-3 | capacity | mAh |
+| 4-5 | work time | **seconds, restarts at 0 in every phase of a program** |
+| 6-7 | voltage | mV |
+| 8-9 | current | mA |
+| 10 | state | 0 not working, 1 charging, 2 rest, 3 discharging, 4 rest, 5 done, 6 done |
+| 11 | temperature | raw - 40 = °C |
+| 12 | cycle count | |
+| 13-14 | internal resistance | mOhm |
+| 15-16 | reserved | |
 
-## Writing slot settings (verified for Charge mode, 10 Oct 2026)
-Command (inside an RFA write 1B 12 82 11 ...):  0F 0D 05 <slot 0-3> <mode> <v1 hi lo> <v2 hi lo> <v3 hi lo> <cycles> 00 00 <chk> FF FF
-chk = sum of bytes 2..13. Modes: 0 Charge, 1 Refresh, 2 Break-In, 3 Discharge, 4 Cycle. Slot byte 4 = all slots (not used).
-v1 = charge mA (Charge/Refresh/Cycle), v2 = discharge mA (Refresh/Discharge/Cycle), v3 = rated capacity mAh (Break-In), cycles for Cycle.
-Limits: charge 200-2500 step 100 mA; discharge 100-1000 step 100 mA; capacity 500-3500 step 100 mAh; cycles 1-12.
-Verified live: slot 1 Charge 0.2 A -> 0.3 A -> 0.2 A; the charger followed within one poll; other slots untouched. Refresh/Break-In/Discharge/Cycle packets are decoded from the app but NOT tested on a real battery.
-The app has no stop command (stop on the charger). System settings (delta-V, temp cut-off, cutoff voltage, trickle) use cmd 0A (set) / 0B (get): decoded but not exposed.
-Firmware update commands exist in the app: deliberately never used.
+**Version query** `0F 03 57 00 57 FF FF`. The reply holds the device id as ASCII hex (`NC2500`), the firmware
+version and the serial. Other identity strings seen: `AA/AAA CHARGER`, `SkyRC Technology Co.,Ltd`.
 
-## Observed program sequencing (Refresh, 11 Oct 2026)
-state byte 1 Charging (5 h) -> 2 Rest (1 h) -> 3 Discharging -> 2 Rest (1 h) -> 1 Charging (5 h) -> 5 Done.
-The 16-bit work-time field restarts at 0 at each phase change (it is seconds; the component reports minutes).
+**Set slot** (start a mode on one slot), sent as `1B 12 82 11 ...`:
+
+`0F 0D 05 <slot 0-3> <mode> <v1 hi lo> <v2 hi lo> <v3 hi lo> <cycles> 00 00 <chk> FF FF`
+
+with `chk` = sum of bytes 2..13. Mode numbers are as in the table above (0-4). Slot byte 4 means all slots.
+
+| Value | Meaning | Used by |
+|-------|---------|---------|
+| v1 | charge current, mA | Charge, Refresh, Cycle |
+| v2 | discharge current, mA | Refresh, Discharge, Cycle |
+| v3 | rated capacity, mAh | Break-In |
+| cycles | number of cycles | Cycle |
+
+Limits: charge 200-2500 mA, discharge 100-1000 mA, capacity 500-3500 mAh (all in steps of 100), cycles 1-12.
+
+There is **no stop command**; stop a slot with the buttons on the charger. System settings (delta-V,
+temperature cut-off, cut-off voltage, trickle charge) use cmd `0A` (set) and `0B` (get). They are decoded
+but not exposed. The app also has firmware-update commands, which this project deliberately never uses.
+
+## 4. Program sequencing
+Observed phases (state byte in brackets):
+
+- **Charge**: charging (1) until the charger's own 300-minute timer, or full.
+- **Refresh**: charge (1) 5 h, rest (2) 1 h, discharge (3), rest (2) 1 h, charge (1) 5 h, done (5).
+- **Break-In** and **Cycle**: the phase order and durations are taken from the charger's manual and have not been observed.
+
+The work time restarts at 0 at each phase change, and the mode byte stays the same for the whole program.
+Progress estimates therefore have to track the phase themselves (see `home-assistant/progress-estimates-package.yaml`).
+
+## 5. Details worth knowing
+- The adapter checksum differs for long messages (section 2, layer 3); the status reply is long.
+- After an unclean disconnect the charger can take about two minutes to accept a new connection.
+- Capacity units were confirmed by arithmetic: 56 mAh after 1019 s at 0.200 A = 0.2 x 1019 / 3600 x 1000.
+
+## 6. Verification status
+Checked on a real NC2500:
+- Every layer above, and the status query. The four slot records decode correctly.
+- Units for voltage, current, capacity, temperature and time.
+- **Charge**: set a slot to 0.2 A, 0.3 A and back; the charger followed within one poll.
+- **Refresh**: ran a complete program on three NiMH cells, with the phase sequence and the per-phase work time described in section 4.
+
+Decoded from the vendor app but **never tried on a real battery**: the Break-In, Discharge and Cycle set-slot
+packets, the system-settings commands, and the exact Break-In and Cycle phase timings.
