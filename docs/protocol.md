@@ -78,7 +78,7 @@ Observed phases (state byte in brackets):
 
 - **Charge**: charging (1) until the charger's own 300-minute timer, or full.
 - **Refresh**: charge (1) 5 h, rest (2) 1 h, discharge (3), rest (2) 1 h, charge (1) 5 h, done (5).
-- **Break-In** and **Cycle**: the phase order and durations are taken from the charger's manual and have not been observed.
+- **Break-In** and **Cycle**: the phase order and durations are are assumed from a published review of the charger and have not been observed.
 
 The work time restarts at 0 at each phase change, and the mode byte stays the same for the whole program.
 Progress estimates therefore have to track the phase themselves (see `home-assistant/progress-estimates-package.yaml`).
