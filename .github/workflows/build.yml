@@ -32,6 +32,6 @@ jobs:
           wifi_password: "ci-password"
           SECRETS
       - name: Validate
-        run: esphome config ci.yaml > /dev/null
+        run: esphome config ci.yaml > validated.txt || { cat validated.txt; exit 1; }
       - name: Compile
         run: esphome compile ci.yaml
