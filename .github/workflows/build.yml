@@ -1,0 +1,37 @@
+name: Build
+
+# Compiles example.yaml against this commit's component (not the published one),
+# so a change that breaks the build is caught before anyone pulls it.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install ESPHome
+        run: pip install "esphome==2026.9.1"
+      - name: Point the example at this checkout and add dummy secrets
+        run: |
+          sed 's#- source: github://scottbambrick/esphome-skyrc-nc2500#- source: { type: local, path: components }#' \
+            example.yaml > ci.yaml
+          grep -q "type: local" ci.yaml
+          cat > secrets.yaml <<'SECRETS'
+          api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          wifi_ssid: "ci"
+          wifi_password: "ci-password"
+          SECRETS
+      - name: Validate
+        run: esphome config ci.yaml > /dev/null
+      - name: Compile
+        run: esphome compile ci.yaml

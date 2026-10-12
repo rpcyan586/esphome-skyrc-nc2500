@@ -114,7 +114,8 @@ void SkyrcNC2500::dump_config() {
     ESP_LOGCONFIG(TAG, "  Charger address: %s", bda_to_string(this->target_bda_).c_str());
   else
     ESP_LOGCONFIG(TAG, "  Charger found by name containing: '%s'", this->name_match_.c_str());
-  ESP_LOGCONFIG(TAG, "  Pairing: %s, PIN '%s'", this->security_ ? "authenticate" : "none", this->pin_.c_str());
+  ESP_LOGCONFIG(TAG, "  Pairing: %s, PIN set (%u digits)", this->security_ ? "authenticate" : "none",
+                (unsigned) this->pin_.size());
   ESP_LOGCONFIG(TAG, "  Poll interval: %ums", (unsigned) this->poll_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Log frames: %s", YESNO(this->log_frames_));
   LOG_BINARY_SENSOR("  ", "Connected", this->connected_);
@@ -141,7 +142,7 @@ void SkyrcNC2500::set_enabled(bool enabled) {
     this->mark_offline_();
     this->set_state_(State::IDLE);
   } else {
-    this->next_connect_at_ = 0;
+    this->next_connect_at_ = millis();
     this->backoff_ms_ = 5000;
   }
 }
@@ -193,7 +194,7 @@ void SkyrcNC2500::gap_callback_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param
       size_t n = std::min<size_t>(instance_->pin_.size(), 16);
       memcpy(pin_code, instance_->pin_.data(), n);
       esp_bt_gap_pin_reply(param->pin_req.bda, true, n, pin_code);
-      ESP_LOGD(TAG, "Pairing: PIN requested, replied with '%s'", instance_->pin_.c_str());
+      ESP_LOGD(TAG, "Pairing: PIN requested, replied with the configured PIN");
       break;
     }
     case ESP_BT_GAP_CFM_REQ_EVT:
@@ -467,7 +468,8 @@ void SkyrcNC2500::loop() {
       break;
 
     case State::IDLE:
-      if (this->enabled_ && this->spp_ready_ && now >= this->next_connect_at_)
+      // Signed difference: still correct when millis() wraps after ~49.7 days
+      if (this->enabled_ && this->spp_ready_ && (int32_t) (now - this->next_connect_at_) >= 0)
         this->begin_connect_();
       break;
 
@@ -486,7 +488,8 @@ void SkyrcNC2500::loop() {
 
     case State::CONNECTING:
       if (in_state > 20000) {
-        esp_spp_disconnect(this->spp_handle_);
+        if (this->spp_handle_ != 0)
+          esp_spp_disconnect(this->spp_handle_);
         this->note_unreachable_("connect timed out");
       }
       break;

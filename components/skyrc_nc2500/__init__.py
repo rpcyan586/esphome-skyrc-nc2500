@@ -1,7 +1,8 @@
-"""SkyRC NC2500 charger over classic Bluetooth (SPP) - ESP32 (original, not S3/C3/C6) + ESP-IDF only."""
+"""SkyRC NC2500 charger over classic Bluetooth (SPP) - original ESP32 only (not S2/S3/C3/C6)."""
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, esp32, sensor, text_sensor
+from esphome.components.esp32.const import VARIANT_ESP32
 from esphome.const import (
     CONF_ID,
     CONF_MAC_ADDRESS,
@@ -23,7 +24,7 @@ from esphome.const import (
     UNIT_VOLT,
 )
 
-CODEOWNERS = []
+CODEOWNERS = ["@scottbambrick"]
 DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor"]
 
@@ -80,7 +81,7 @@ SLOT_SCHEMA = cv.Schema(
     }
 )
 
-CONFIG_SCHEMA = cv.Schema(
+_BASE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(SkyrcNC2500),
         cv.Optional(CONF_MAC_ADDRESS): cv.mac_address,
@@ -89,13 +90,19 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PIN, default="1234"): cv.All(cv.string_strict, cv.Length(min=1, max=16)),
         cv.Optional(CONF_SECURITY, default="authenticate"): cv.enum(SECURITY, lower=True),
         cv.Optional(CONF_POLL_INTERVAL, default="15s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_LOG_FRAMES, default=True): cv.boolean,
+        cv.Optional(CONF_LOG_FRAMES, default=False): cv.boolean,
         cv.Optional(CONF_SKIP_AUTH_CHECK, default=False): cv.boolean,
         cv.Optional(CONF_CONNECTED): binary_sensor.binary_sensor_schema(
             device_class=DEVICE_CLASS_CONNECTIVITY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
         cv.Optional(CONF_SLOTS): cv.All(cv.ensure_list(SLOT_SCHEMA), cv.Length(max=4)),
     }
 ).extend(cv.COMPONENT_SCHEMA)
+
+CONFIG_SCHEMA = cv.All(
+    _BASE_SCHEMA,
+    # Classic Bluetooth exists only on the original ESP32
+    esp32.only_on_variant(supported=[VARIANT_ESP32], msg_prefix="skyrc_nc2500 (classic Bluetooth)"),
+)
 
 
 async def to_code(config):

@@ -159,7 +159,7 @@ class SkyrcNC2500 : public Component {
   uint8_t security_{1};
   uint8_t channel_cfg_{0};  // serial channel; 0 = look it up
   uint32_t poll_interval_ms_{15000};
-  bool log_frames_{true};
+  bool log_frames_{false};
   bool skip_auth_check_{false};
   bool enabled_{true};
 

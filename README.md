@@ -12,6 +12,7 @@ and the current "SkyRC" phone app doesn't support it (the old *SkyRC Smart Charg
 ## Requirements
 - An **original ESP32** (classic Bluetooth). S2/S3/C3/C6 cannot do this.
 - ESPHome 2026.9 or newer with the ESP-IDF framework. Don't enable `esp32_ble` / `bluetooth_proxy` on the node.
+  (Choosing an S2/S3/C3/C6 board is rejected when the config is validated.)
 - The charger switched on for Bluetooth (hold ENTER until the blue LED lights). It only answers while on.
 
 ## Use
@@ -35,6 +36,12 @@ straight to the charger.
 
 The charger accepts one Bluetooth connection at a time. The example has a "Bluetooth Link" switch to let go of
 it for the phone app.
+
+## Changes
+
+- **v0.1.0** (first tagged release): `log_frames` now defaults to `false`; the pairing PIN is no longer
+  written to the logs; reconnect timing stays correct after ~49.7 days of uptime (millis() wrap); boards
+  without classic Bluetooth are rejected at validation; GitHub Actions compiles the example on every push.
 
 ## Status
 Working on real hardware (NC2500, firmware as of Oct 2026):
