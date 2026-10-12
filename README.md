@@ -43,6 +43,10 @@ it for the phone app.
   written to the logs; reconnect timing stays correct after ~49.7 days of uptime (millis() wrap); boards
   without classic Bluetooth are rejected at validation; GitHub Actions compiles the example on every push.
 
+To avoid `main` changing underneath you, pin the component to a
+[release](https://github.com/scottbambrick/esphome-skyrc-nc2500/releases):
+`source: github://scottbambrick/esphome-skyrc-nc2500@v0.1.0`.
+
 ## Status
 Working on real hardware (NC2500, firmware as of Oct 2026):
 - Reading all four slots.
