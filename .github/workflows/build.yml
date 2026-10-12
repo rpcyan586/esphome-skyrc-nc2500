@@ -26,11 +26,8 @@ jobs:
           sed 's#- source: github://scottbambrick/esphome-skyrc-nc2500#- source: { type: local, path: components }#' \
             example.yaml > ci.yaml
           grep -q "type: local" ci.yaml
-          cat > secrets.yaml <<'SECRETS'
-          api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-          wifi_ssid: "ci"
-          wifi_password: "ci-password"
-          SECRETS
+          printf 'api_key: "%s"\nwifi_ssid: "ci"\nwifi_password: "ci-password"\n' \
+            "$(openssl rand -base64 32)" > secrets.yaml
       - name: Validate
         run: esphome config ci.yaml > validated.txt || { cat validated.txt; exit 1; }
       - name: Compile
